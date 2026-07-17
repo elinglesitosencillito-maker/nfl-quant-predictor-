@@ -1,0 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Archivo:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-pitch: #07090e;
+  --color-panel: #0d1119;
+  --color-panel2: #131926;
+  --color-line: #1e2738;
+  --color-ink: #e8edf6;
+  --color-muted: #7d8aa3;
+  --color-volt: #c9f73a;
+  --color-voltdim: #9dc22c;
+  --color-ember: #ff5a3c;
+  --color-cyanline: #45d6e8;
+  --font-display: "Barlow Condensed", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+  --font-body: "Archivo", sans-serif;
+}
+
+html { background: #07090e; }
+body {
+  font-family: var(--font-body);
+  color: var(--color-ink);
+  background:
+    radial-gradient(1200px 500px at 80% -10%, rgba(201, 247, 58, 0.05), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, rgba(69, 214, 232, 0.05), transparent 60%),
+    #07090e;
+  min-height: 100vh;
+}
+
+.gridlines {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+::selection { background: rgba(201, 247, 58, 0.3); }
+
+.scroll-slim::-webkit-scrollbar { height: 8px; width: 8px; }
+.scroll-slim::-webkit-scrollbar-thumb { background: #26314a; border-radius: 4px; }
+.scroll-slim::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
