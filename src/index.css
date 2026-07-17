@@ -45,3 +45,4 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.25; }
 }
+.live-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
