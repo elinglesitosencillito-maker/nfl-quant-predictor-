@@ -6,8 +6,8 @@ import {
 } from 'lucide-react';
 import type { Team } from '../lib/teams';
 import type { LeagueData } from '../lib/dataLoader';
-import { predecirPartido } from '../lib/engine';
-import type { Prediction } from '../lib/engine';
+import { predecirPartido, injuryImpact } from '../lib/engine';
+import type { InjuryReport, Prediction } from '../lib/engine';
 import MarginChart from './MarginChart';
 import ScoreDistChart from './ScoreDistChart';
 
@@ -83,15 +83,46 @@ export default function PredictorView({
   const [temp, setTemp] = useState(12);
   const [homeQBOut, setHomeQBOut] = useState(false);
   const [awayQBOut, setAwayQBOut] = useState(false);
+  const [homeInjuries, setHomeInjuries] = useState<InjuryReport>({ qbOut: false, offensiveSkillOut: 0, offensiveLineOut: 0, defensiveStarOut: 0 });
+  const [awayInjuries, setAwayInjuries] = useState<InjuryReport>({ qbOut: false, offensiveSkillOut: 0, offensiveLineOut: 0, defensiveStarOut: 0 });
   const [copied, setCopied] = useState(false);
 
   const home = teams.find((t) => t.abbr === homeAbbr) ?? teams[0];
   const away = teams.find((t) => t.abbr === awayAbbr) ?? teams[1];
+  const espnReport = (abbr: string): InjuryReport => {
+    const listed = league.espnInjuries[abbr] ?? [];
+    const unavailable = listed.filter((item) => /out|injured reserve|ir|reserve/i.test(item.status));
+    return {
+      qbOut: unavailable.some((item) => /qb|quarterback/i.test(item.position)),
+      offensiveSkillOut: Math.min(3, unavailable.filter((item) => /wr|rb|te|fb/i.test(item.position)).length),
+      offensiveLineOut: Math.min(3, unavailable.filter((item) => /ol|ot|og|c/i.test(item.position)).length),
+      defensiveStarOut: Math.min(3, unavailable.filter((item) => /def|dl|de|dt|lb|cb|s/i.test(item.position)).length),
+    };
+  };
+  const homeESPN = useMemo(() => espnReport(home.abbr), [league.espnInjuries, home.abbr]);
+  const awayESPN = useMemo(() => espnReport(away.abbr), [league.espnInjuries, away.abbr]);
+  const effectiveHomeInjuries = useMemo(() => ({
+    ...homeInjuries,
+    offensiveSkillOut: Math.min(3, homeInjuries.offensiveSkillOut + homeESPN.offensiveSkillOut),
+    offensiveLineOut: Math.min(3, homeInjuries.offensiveLineOut + homeESPN.offensiveLineOut),
+    defensiveStarOut: Math.min(3, homeInjuries.defensiveStarOut + homeESPN.defensiveStarOut),
+  }), [homeInjuries, homeESPN]);
+  const effectiveAwayInjuries = useMemo(() => ({
+    ...awayInjuries,
+    offensiveSkillOut: Math.min(3, awayInjuries.offensiveSkillOut + awayESPN.offensiveSkillOut),
+    offensiveLineOut: Math.min(3, awayInjuries.offensiveLineOut + awayESPN.offensiveLineOut),
+    defensiveStarOut: Math.min(3, awayInjuries.defensiveStarOut + awayESPN.defensiveStarOut),
+  }), [awayInjuries, awayESPN]);
 
   const pred: Prediction = useMemo(
-    () => predecirPartido(home, away, { windMph: wind, tempC: temp, homeQBOut, awayQBOut }, league.leagueAvg),
-    [home, away, wind, temp, homeQBOut, awayQBOut, league.leagueAvg],
+    () => predecirPartido(home, away, { windMph: wind, tempC: temp, homeQBOut: homeQBOut || homeESPN.qbOut, awayQBOut: awayQBOut || awayESPN.qbOut, homeInjuries: effectiveHomeInjuries, awayInjuries: effectiveAwayInjuries }, league.leagueAvg),
+    [home, away, wind, temp, homeQBOut, awayQBOut, homeESPN, awayESPN, effectiveHomeInjuries, effectiveAwayInjuries, league.leagueAvg],
   );
+
+  const updateInjuries = (side: 'home' | 'away', key: keyof InjuryReport, value: number | boolean) => {
+    const setter = side === 'home' ? setHomeInjuries : setAwayInjuries;
+    setter((current) => ({ ...current, [key]: value }));
+  };
 
   const winner = pred.verdict === 'home' ? home : away;
   const winnerPct = pred.verdictPct;
@@ -106,6 +137,8 @@ export default function PredictorView({
       mu_away: +pred.mu.toFixed(2),
       wind_mph: wind, temp_c: temp,
       home_qb_out: homeQBOut, away_qb_out: awayQBOut,
+      injuries: { home: homeInjuries, away: awayInjuries },
+      injury_elo_penalty: { home: injuryImpact(homeInjuries).eloPenalty, away: injuryImpact(awayInjuries).eloPenalty },
     },
     moneyline_1x2: {
       home_win_prob: +(pred.mc.homeWinPct / 100).toFixed(4),
@@ -216,6 +249,62 @@ export default function PredictorView({
               {q.val && <span className="font-semibold">−{q.pen.toFixed(0)} Elo</span>}
             </button>
           ))}
+        </div>
+
+        <div className="mt-4 rounded-lg border border-cyanline/30 bg-cyanline/5 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-widest text-cyanline">ESPN NFL · reporte actualizado</div>
+              <div className="font-mono text-[10px] text-muted mt-1">OUT / IR alimenta automáticamente el ajuste; cuestionables no se descuentan todavía.</div>
+            </div>
+            <span className="font-mono text-[10px] text-cyanline">{(league.espnInjuries[home.abbr] ?? []).length + (league.espnInjuries[away.abbr] ?? []).length} registros</span>
+          </div>
+          <div className="mt-2 grid gap-2 md:grid-cols-2">
+            {[home, away].map((team) => {
+              const injuries = league.espnInjuries[team.abbr] ?? [];
+              return <div key={team.abbr} className="rounded border border-line bg-panel px-2.5 py-2 font-mono text-[10px] text-muted">
+                <span className="font-semibold text-ink">{team.abbr}</span>{' '}
+                {injuries.length ? injuries.slice(0, 4).map((item) => `${item.name} (${item.status})`).join(' · ') : 'Sin lesionados publicados por ESPN'}
+                {injuries.length > 4 && ` · +${injuries.length - 4}`}
+              </div>;
+            })}
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-line bg-panel2 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-widest text-muted">Reporte de lesionados · impacto interno</div>
+              <div className="font-mono text-[10px] text-muted mt-1">0 = ninguno · máximo 3 ausencias relevantes por grupo</div>
+            </div>
+            <span className="font-mono text-[10px] text-volt">Elo + puntos + defensa</span>
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {([
+              { label: `${home.abbr} local`, side: 'home' as const, report: homeInjuries },
+              { label: `${away.abbr} visitante`, side: 'away' as const, report: awayInjuries },
+            ]).map(({ label, side, report }) => {
+              const impact = injuryImpact(report);
+              return (
+                <div key={side} className="rounded-md border border-line bg-panel p-3">
+                  <div className="flex justify-between font-mono text-xs font-semibold"><span>{label}</span><span className="text-ember">−{impact.eloPenalty} Elo</span></div>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {([
+                      ['offensiveSkillOut', 'Skill'],
+                      ['offensiveLineOut', 'OL'],
+                      ['defensiveStarOut', 'Defensa'],
+                    ] as const).map(([key, text]) => (
+                      <label key={key} className="font-mono text-[10px] text-muted">{text}
+                        <select value={report[key]} onChange={(e) => updateInjuries(side, key, +e.target.value)} className="mt-1 w-full rounded border border-line bg-panel2 px-2 py-1.5 text-ink">
+                          {[0, 1, 2, 3].map((n) => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
