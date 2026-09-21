@@ -17,11 +17,51 @@ const SCORE_WEIGHTS: Record<number, number> = {
 };
 const scoreWeight = (s: number): number => SCORE_WEIGHTS[s] ?? (s > 45 ? 0.55 : 0.6);
 
+export interface InjuryReport {
+  qbOut: boolean;
+  offensiveSkillOut: number;
+  offensiveLineOut: number;
+  defensiveStarOut: number;
+}
+
+export const EMPTY_INJURY_REPORT: InjuryReport = {
+  qbOut: false,
+  offensiveSkillOut: 0,
+  offensiveLineOut: 0,
+  defensiveStarOut: 0,
+};
+
 export interface GameConditions {
   windMph: number;
   tempC: number;
   homeQBOut: boolean;
   awayQBOut: boolean;
+  homeInjuries?: InjuryReport;
+  awayInjuries?: InjuryReport;
+}
+
+export interface InjuryImpact {
+  eloPenalty: number;
+  offenseMultiplier: number;
+  defenseMultiplier: number;
+  summary: string[];
+}
+
+export function injuryImpact(report: InjuryReport | undefined): InjuryImpact {
+  const r = report ?? EMPTY_INJURY_REPORT;
+  const offensiveSkill = Math.min(3, Math.max(0, r.offensiveSkillOut));
+  const offensiveLine = Math.min(3, Math.max(0, r.offensiveLineOut));
+  const defensiveStar = Math.min(3, Math.max(0, r.defensiveStarOut));
+  return {
+    eloPenalty: (offensiveSkill * 8) + (offensiveLine * 7) + (defensiveStar * 9),
+    offenseMultiplier: Math.max(0.72, 1 - offensiveSkill * 0.035 - offensiveLine * 0.04),
+    defenseMultiplier: 1 + defensiveStar * 0.035,
+    summary: [
+      offensiveSkill > 0 ? `${offensiveSkill} skill ofensivo fuera` : '',
+      offensiveLine > 0 ? `${offensiveLine} liniero(s) fuera` : '',
+      defensiveStar > 0 ? `${defensiveStar} defensor(es) clave fuera` : '',
+    ].filter(Boolean),
+  };
 }
 
 export interface MonteCarloSummary {
@@ -141,10 +181,16 @@ export function predecirPartido(
 ): Prediction {
   const notes: string[] = [];
 
-  const penH = qbPenalty(home, cond.homeQBOut);
-  const penA = qbPenalty(away, cond.awayQBOut);
-  if (penH > 0) notes.push(`QB local (${home.qb}) OUT: −${penH.toFixed(0)} Elo`);
-  if (penA > 0) notes.push(`QB visitante (${away.qb}) OUT: −${penA.toFixed(0)} Elo`);
+  const homeInjury = injuryImpact(cond.homeInjuries);
+  const awayInjury = injuryImpact(cond.awayInjuries);
+  const penH = qbPenalty(home, cond.homeQBOut) + homeInjury.eloPenalty;
+  const penA = qbPenalty(away, cond.awayQBOut) + awayInjury.eloPenalty;
+  if (cond.homeQBOut) notes.push(`QB local (${home.qb}) OUT: −${qbPenalty(home, true).toFixed(0)} Elo`);
+  if (cond.awayQBOut) notes.push(`QB visitante (${away.qb}) OUT: −${qbPenalty(away, true).toFixed(0)} Elo`);
+  homeInjury.summary.forEach((item) => notes.push(`Lesiones local: ${item}`));
+  awayInjury.summary.forEach((item) => notes.push(`Lesiones visitante: ${item}`));
+  if (homeInjury.eloPenalty > 0) notes.push(`Impacto total lesiones local: −${homeInjury.eloPenalty.toFixed(0)} Elo`);
+  if (awayInjury.eloPenalty > 0) notes.push(`Impacto total lesiones visitante: −${awayInjury.eloPenalty.toFixed(0)} Elo`);
 
   const eloH = home.elo + home.qbAdj - penH + HOME_FIELD_ELO;
   const eloA = away.elo + away.qbAdj - penA;
@@ -158,6 +204,8 @@ export function predecirPartido(
 
   let lambdaRaw = offH * defA * avg * 1.045;
   let muRaw = offA * defH * avg * 0.985;
+  lambdaRaw *= homeInjury.offenseMultiplier * awayInjury.defenseMultiplier;
+  muRaw *= awayInjury.offenseMultiplier * homeInjury.defenseMultiplier;
 
   const poissonMargin = lambdaRaw - muRaw;
   const totalRaw = lambdaRaw + muRaw;
