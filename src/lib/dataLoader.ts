@@ -11,11 +11,24 @@ const NFELO_URL =
   'https://raw.githubusercontent.com/greerreNFL/nfelo/main/output_data/elo_snapshot.csv';
 const GAMES_URL =
   'https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv';
+const ESPN_INJURIES_URL =
+  'https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries';
 
 const REMAP: Record<string, string> = { OAK: 'LV', SD: 'LAC', STL: 'LAR', LA: 'LAR' };
 const fix = (abbr: string) => REMAP[abbr] ?? abbr;
 
 const FORM_WEIGHTS = [0.4, 0.28, 0.19, 0.13];
+
+export interface ESPNInjury {
+  name: string;
+  position: string;
+  status: string;
+  injury: string;
+}
+
+export interface ESPNInjuriesByTeam {
+  [abbr: string]: ESPNInjury[];
+}
 
 export interface LeagueData {
   teams: Team[];
@@ -23,6 +36,7 @@ export interface LeagueData {
   season: number;
   throughWeek: number;
   eloWeek: number;
+  espnInjuries: ESPNInjuriesByTeam;
   fetchedAt: string;
 }
 
@@ -52,14 +66,30 @@ interface GameRow {
 }
 
 export async function loadLeagueData(): Promise<LeagueData> {
-  const [eloRes, gamesRes] = await Promise.all([
+  const [eloRes, gamesRes, injuriesRes] = await Promise.all([
     fetch(NFELO_URL, { cache: 'no-store' }),
     fetch(GAMES_URL, { cache: 'no-store' }),
+    fetch(ESPN_INJURIES_URL, { cache: 'no-store' }).catch(() => null),
   ]);
   if (!eloRes.ok) throw new Error(`nfelo elo_snapshot: HTTP ${eloRes.status}`);
   if (!gamesRes.ok) throw new Error(`nflverse games.csv: HTTP ${gamesRes.status}`);
 
   const [eloText, gamesText] = await Promise.all([eloRes.text(), gamesRes.text()]);
+  const espnInjuries: ESPNInjuriesByTeam = {};
+  if (injuriesRes?.ok) {
+    const payload = await injuriesRes.json() as { injuries?: Array<{ athlete?: { displayName?: string; position?: { abbreviation?: string } }; team?: { abbreviation?: string }; status?: string; type?: { text?: string } }> };
+    for (const item of payload.injuries ?? []) {
+      const abbr = fix(item.team?.abbreviation ?? '');
+      const name = item.athlete?.displayName;
+      if (!abbr || !name) continue;
+      (espnInjuries[abbr] ??= []).push({
+        name,
+        position: item.athlete?.position?.abbreviation ?? '—',
+        status: item.status ?? 'Unknown',
+        injury: item.type?.text ?? 'Reported injury',
+      });
+    }
+  }
 
   const eloRows = parseCSV(eloText);
   const eh = eloRows[0];
@@ -153,6 +183,7 @@ export async function loadLeagueData(): Promise<LeagueData> {
     season: maxSeason || eloSeason,
     throughWeek,
     eloWeek,
+    espnInjuries,
     fetchedAt: new Date().toISOString(),
   };
 }

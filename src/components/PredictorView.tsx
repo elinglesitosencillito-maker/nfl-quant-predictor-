@@ -89,10 +89,34 @@ export default function PredictorView({
 
   const home = teams.find((t) => t.abbr === homeAbbr) ?? teams[0];
   const away = teams.find((t) => t.abbr === awayAbbr) ?? teams[1];
+  const espnReport = (abbr: string): InjuryReport => {
+    const listed = league.espnInjuries[abbr] ?? [];
+    const unavailable = listed.filter((item) => /out|injured reserve|ir|reserve/i.test(item.status));
+    return {
+      qbOut: unavailable.some((item) => /qb|quarterback/i.test(item.position)),
+      offensiveSkillOut: Math.min(3, unavailable.filter((item) => /wr|rb|te|fb/i.test(item.position)).length),
+      offensiveLineOut: Math.min(3, unavailable.filter((item) => /ol|ot|og|c/i.test(item.position)).length),
+      defensiveStarOut: Math.min(3, unavailable.filter((item) => /def|dl|de|dt|lb|cb|s/i.test(item.position)).length),
+    };
+  };
+  const homeESPN = useMemo(() => espnReport(home.abbr), [league.espnInjuries, home.abbr]);
+  const awayESPN = useMemo(() => espnReport(away.abbr), [league.espnInjuries, away.abbr]);
+  const effectiveHomeInjuries = useMemo(() => ({
+    ...homeInjuries,
+    offensiveSkillOut: Math.min(3, homeInjuries.offensiveSkillOut + homeESPN.offensiveSkillOut),
+    offensiveLineOut: Math.min(3, homeInjuries.offensiveLineOut + homeESPN.offensiveLineOut),
+    defensiveStarOut: Math.min(3, homeInjuries.defensiveStarOut + homeESPN.defensiveStarOut),
+  }), [homeInjuries, homeESPN]);
+  const effectiveAwayInjuries = useMemo(() => ({
+    ...awayInjuries,
+    offensiveSkillOut: Math.min(3, awayInjuries.offensiveSkillOut + awayESPN.offensiveSkillOut),
+    offensiveLineOut: Math.min(3, awayInjuries.offensiveLineOut + awayESPN.offensiveLineOut),
+    defensiveStarOut: Math.min(3, awayInjuries.defensiveStarOut + awayESPN.defensiveStarOut),
+  }), [awayInjuries, awayESPN]);
 
   const pred: Prediction = useMemo(
-    () => predecirPartido(home, away, { windMph: wind, tempC: temp, homeQBOut, awayQBOut, homeInjuries, awayInjuries }, league.leagueAvg),
-    [home, away, wind, temp, homeQBOut, awayQBOut, homeInjuries, awayInjuries, league.leagueAvg],
+    () => predecirPartido(home, away, { windMph: wind, tempC: temp, homeQBOut: homeQBOut || homeESPN.qbOut, awayQBOut: awayQBOut || awayESPN.qbOut, homeInjuries: effectiveHomeInjuries, awayInjuries: effectiveAwayInjuries }, league.leagueAvg),
+    [home, away, wind, temp, homeQBOut, awayQBOut, homeESPN, awayESPN, effectiveHomeInjuries, effectiveAwayInjuries, league.leagueAvg],
   );
 
   const updateInjuries = (side: 'home' | 'away', key: keyof InjuryReport, value: number | boolean) => {
@@ -225,6 +249,26 @@ export default function PredictorView({
               {q.val && <span className="font-semibold">−{q.pen.toFixed(0)} Elo</span>}
             </button>
           ))}
+        </div>
+
+        <div className="mt-4 rounded-lg border border-cyanline/30 bg-cyanline/5 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-widest text-cyanline">ESPN NFL · reporte actualizado</div>
+              <div className="font-mono text-[10px] text-muted mt-1">OUT / IR alimenta automáticamente el ajuste; cuestionables no se descuentan todavía.</div>
+            </div>
+            <span className="font-mono text-[10px] text-cyanline">{(league.espnInjuries[home.abbr] ?? []).length + (league.espnInjuries[away.abbr] ?? []).length} registros</span>
+          </div>
+          <div className="mt-2 grid gap-2 md:grid-cols-2">
+            {[home, away].map((team) => {
+              const injuries = league.espnInjuries[team.abbr] ?? [];
+              return <div key={team.abbr} className="rounded border border-line bg-panel px-2.5 py-2 font-mono text-[10px] text-muted">
+                <span className="font-semibold text-ink">{team.abbr}</span>{' '}
+                {injuries.length ? injuries.slice(0, 4).map((item) => `${item.name} (${item.status})`).join(' · ') : 'Sin lesionados publicados por ESPN'}
+                {injuries.length > 4 && ` · +${injuries.length - 4}`}
+              </div>;
+            })}
+          </div>
         </div>
 
         <div className="mt-4 rounded-lg border border-line bg-panel2 p-3">
